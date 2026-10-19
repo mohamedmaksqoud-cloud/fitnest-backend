@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -71,7 +71,7 @@ def health():
 
 
 @app.get("/debug")
-def debug():
+def debug(request: Request):
     """Non-sensitive diagnostics: what the server sees (no secrets)."""
     videos_dir = BASE_DIR / "static" / "videos"
     try:
@@ -81,6 +81,10 @@ def debug():
     except Exception as exc:  # noqa: BLE001
         db_ok = f"unreachable: {type(exc).__name__}"
     return {
+        "scope_path": request.scope.get("path"),
+        "root_path": request.scope.get("root_path"),
+        "headers": {k: v for k, v in request.headers.items()
+                    if "vercel" in k.lower() or "forwarded" in k.lower() or "uri" in k.lower()},
         "static_exists": _static_dir.is_dir(),
         "videos": sorted(p.name for p in videos_dir.glob("*")) if videos_dir.is_dir() else [],
         "db_scheme": settings.DATABASE_URL.split("://")[0] if "://" in settings.DATABASE_URL else "?",
@@ -93,3 +97,16 @@ def debug():
 @app.get("/")
 def root():
     return {"app": "FitNest API", "version": "1.0.0"}
+
+
+@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+def echo_path(full_path: str, request: Request):
+    """TEMPORARY diagnostic: shows exactly what the serverless platform delivers."""
+    return {
+        "caught_path": full_path,
+        "scope_path": request.scope.get("path"),
+        "root_path": request.scope.get("root_path"),
+        "method": request.method,
+        "headers": dict(request.headers),
+        "query": dict(request.query_params),
+    }

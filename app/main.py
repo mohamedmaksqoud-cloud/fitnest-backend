@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,25 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 app = FastAPI(title="FitNest API", version="1.0.0")
+
+
+@app.middleware("http")
+async def restore_original_path(request: Request, call_next):
+    """Vercel's rewrite behavior delivers the rewritten path (/api/index) to
+    the function and drops the original URL. The original path is smuggled
+    through the __p__ query param (see vercel.json) — restore it here so the
+    router sees the real path."""
+    raw_qs = request.scope.get("query_string", b"").decode("latin-1")
+    original, rest = None, []
+    for key, value in parse_qsl(raw_qs, keep_blank_values=True):
+        if key == "__p__" and original is None:
+            original = value
+        else:
+            rest.append((key, value))
+    if original:
+        request.scope["path"] = original
+        request.scope["query_string"] = urlencode(rest).encode("latin-1")
+    return await call_next(request)
 
 app.state.limiter = limiter
 app.add_exception_handler(

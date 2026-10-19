@@ -1,13 +1,16 @@
 """Vercel serverless entrypoint: wraps the FastAPI app with Mangum.
 
-Vercel's rewrite behavior delivers the *rewritten* path (/api/index) to the
-function and drops the original URL entirely (no header carries it). So we
-smuggle the original path through a query parameter (see vercel.json) and
-restore it on the event before Mangum builds the ASGI scope.
+Two Vercel quirks are handled here:
 
-Vercel's Python event may follow the API Gateway v1 shape
-(httpMethod/path/queryStringParameters) or the v2 shape
-(version=2.0/rawPath/rawQueryString) — handle both.
+1. Vercel's rewrite behavior delivers the *rewritten* path (/api/index) to the
+   function and drops the original URL entirely (no header carries it). We
+   smuggle the original path through a query parameter (see vercel.json) and
+   restore it before routing.
+
+2. Vercel's Python event shape is not a clean API Gateway v1/v2 payload, so
+   instead of relying on Mangum's format detection we normalize the event
+   into a v2-shaped dict ourselves, reading method/path/query/body from every
+   plausible location.
 """
 
 from urllib.parse import parse_qsl, urlencode
@@ -20,49 +23,68 @@ _PATH_PARAM = "__p__"
 _base_handler = Mangum(app, lifespan="off")
 
 
-def _extract(params):
-    """Split (key, value) pairs into (original_path_or_None, remaining_pairs)."""
-    original = None
-    rest = []
-    for key, value in params:
-        if key == _PATH_PARAM and original is None:
-            original = value
-        else:
-            rest.append((key, value))
-    return original, rest
-
-
-def _restore_v2(event: dict) -> bool:
+def _pop_path_param(event):
+    """Return (original_path_or_None, remaining_query_string)."""
     qs = event.get("rawQueryString")
-    if not qs:
-        return False
-    original, rest = _extract(parse_qsl(qs, keep_blank_values=True))
-    if not original:
-        return False
-    event["rawPath"] = original
-    event["rawQueryString"] = urlencode(rest)
-    http = (event.get("requestContext") or {}).get("http")
-    if isinstance(http, dict):
-        http["path"] = original
-    return True
+    if qs:
+        original, rest = None, []
+        for key, value in parse_qsl(qs, keep_blank_values=True):
+            if key == _PATH_PARAM and original is None:
+                original = value
+            else:
+                rest.append((key, value))
+        if original:
+            return original, urlencode(rest)
+        return None, qs
+    qsp = dict(event.get("queryStringParameters") or {})
+    if _PATH_PARAM in qsp:
+        original = qsp.pop(_PATH_PARAM)
+        return original, urlencode(qsp)
+    mvq = event.get("multiValueQueryStringParameters") or {}
+    vals = mvq.get(_PATH_PARAM)
+    if vals:
+        original = vals[0] if isinstance(vals, list) else vals
+        return original, ""
+    return None, ""
 
 
-def _restore_v1(event: dict) -> bool:
-    qsp = event.get("queryStringParameters") or {}
-    original = qsp.get(_PATH_PARAM)
-    if not original:
-        return False
-    event["path"] = original
-    remaining = {k: v for k, v in qsp.items() if k != _PATH_PARAM}
-    event["queryStringParameters"] = remaining or None
-    mvq = event.get("multiValueQueryStringParameters")
-    if isinstance(mvq, dict):
-        mvq.pop(_PATH_PARAM, None)
-        if not mvq:
-            event["multiValueQueryStringParameters"] = None
-    return True
+def _normalize_event(event):
+    original_path, query_string = _pop_path_param(event)
+
+    rc = event.get("requestContext") or {}
+    http_ctx = rc.get("http") or {}
+    identity = rc.get("identity") or {}
+
+    method = event.get("httpMethod") or http_ctx.get("method") or "GET"
+    path = (
+        original_path
+        or event.get("path")
+        or event.get("rawPath")
+        or http_ctx.get("path")
+        or "/"
+    )
+    headers = {str(k): str(v) for k, v in (event.get("headers") or {}).items()}
+    source_ip = http_ctx.get("sourceIp") or identity.get("sourceIp") or "127.0.0.1"
+
+    return {
+        "version": "2.0",
+        "routeKey": "$default",
+        "rawPath": path,
+        "rawQueryString": query_string,
+        "headers": headers,
+        "requestContext": {
+            "http": {
+                "method": method,
+                "path": path,
+                "protocol": http_ctx.get("protocol", "HTTP/1.1"),
+                "sourceIp": source_ip,
+                "userAgent": headers.get("user-agent", ""),
+            },
+        },
+        "body": event.get("body") or "",
+        "isBase64Encoded": bool(event.get("isBase64Encoded")),
+    }
 
 
 def handler(event, context):
-    _restore_v2(event) or _restore_v1(event)
-    return _base_handler(event, context)
+    return _base_handler(_normalize_event(event), context)

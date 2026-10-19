@@ -99,7 +99,11 @@ def debug(request: Request):
             conn.execute(text("SELECT 1"))
         db_ok = True
     except Exception as exc:  # noqa: BLE001
-        db_ok = f"unreachable: {type(exc).__name__}"
+        msg = str(exc).split("\n")[0][:180]
+        # never leak credentials that may appear in driver messages
+        for secret in ("1001Ww%40%401001",):
+            msg = msg.replace(secret, "***")
+        db_ok = f"{type(exc).__name__}: {msg}"
     return {
         "scope_path": request.scope.get("path"),
         "root_path": request.scope.get("root_path"),

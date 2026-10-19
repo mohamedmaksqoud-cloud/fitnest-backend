@@ -123,14 +123,6 @@ def root():
     return {"app": "FitNest API", "version": "1.0.0"}
 
 
-@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-def echo_path(full_path: str, request: Request):
-    """TEMPORARY diagnostic: shows exactly what the serverless platform delivers."""
-    return {
-        "caught_path": full_path,
-        "scope_path": request.scope.get("path"),
-        "root_path": request.scope.get("root_path"),
-        "method": request.method,
-        "headers": dict(request.headers),
-        "query": dict(request.query_params),
-    }
+@app.get("/api/{rest:path}")
+def api_fallback(rest: str):
+    return {"detail": f"Not Found: /{rest}"}

@@ -194,6 +194,8 @@ def reset_password(request: Request, body: ResetIn, db: Session = Depends(get_db
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "الرمز غير صالح أو منتهي الصلاحية")
     _check_otp(db, user, OTPCode.PURPOSE_RESET, body.code)
     user.password_hash = hash_password(body.new_password)
+    # Resetting via an emailed code proves email ownership — verify the account too.
+    user.is_verified = True
     db.commit()
     return MessageOut(message="تم تغيير كلمة المرور بنجاح — سجّل الدخول الآن")
 

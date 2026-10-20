@@ -47,6 +47,11 @@ class Settings(BaseSettings):
         return bool(self.SMTP_HOST and self.SMTP_USER and self.SMTP_PASS)
 
     @property
+    def smtp_pass_clean(self) -> str:
+        """App passwords are often pasted with spaces/dashes — strip them."""
+        return (self.SMTP_PASS or "").strip().replace(" ", "").replace("-", "")
+
+    @property
     def gemini_configured(self) -> bool:
         return bool(self.GEMINI_API_KEY.strip())
 

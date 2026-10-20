@@ -60,7 +60,7 @@ def _send(to_email: str, subject: str, html_body: str) -> bool:
         else:
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
         try:
-            server.login(settings.SMTP_USER, settings.SMTP_PASS)
+            server.login(settings.SMTP_USER, settings.smtp_pass_clean)
             server.send_message(msg)
         finally:
             server.quit()

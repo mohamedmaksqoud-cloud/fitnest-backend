@@ -90,6 +90,30 @@ def health():
     return {"status": "ok"}
 
 
+def _smtp_login_check():
+    """Try an SMTP login (no email sent). Returns True or a sanitized error."""
+    if not settings.smtp_configured:
+        return "not_configured"
+    try:
+        import smtplib
+
+        if settings.SMTP_TLS:
+            srv = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            srv.starttls()
+        else:
+            srv = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+        try:
+            srv.login(settings.SMTP_USER, settings.smtp_pass_clean)
+        finally:
+            try:
+                srv.quit()
+            except Exception:
+                pass
+        return True
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {str(exc)[:140]}"
+
+
 @app.get("/debug")
 def debug(request: Request):
     """Non-sensitive diagnostics: what the server sees (no secrets)."""
@@ -114,6 +138,7 @@ def debug(request: Request):
         "db_scheme": settings.DATABASE_URL.split("://")[0] if "://" in settings.DATABASE_URL else "?",
         "db_reachable": db_ok,
         "smtp_configured": settings.smtp_configured,
+        "smtp_login_ok": _smtp_login_check(),
         "gemini_configured": settings.gemini_configured,
     }
 

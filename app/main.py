@@ -91,17 +91,20 @@ def health():
 
 
 def _smtp_login_check():
-    """Try an SMTP login (no email sent). Returns True or a sanitized error."""
+    """Try an SMTP login (no email sent). Returns True or stage + sanitized error."""
     if not settings.smtp_configured:
         return "not_configured"
+    stage = "connect"
     try:
         import smtplib
 
         if settings.SMTP_TLS:
             srv = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            stage = "starttls"
             srv.starttls()
         else:
             srv = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+        stage = "login"
         try:
             srv.login(settings.SMTP_USER, settings.smtp_pass_clean)
         finally:
@@ -111,7 +114,7 @@ def _smtp_login_check():
                 pass
         return True
     except Exception as exc:  # noqa: BLE001
-        return f"{type(exc).__name__}: {str(exc)[:140]}"
+        return f"{stage}: {type(exc).__name__}: {str(exc)[:140]}"
 
 
 @app.get("/debug")
